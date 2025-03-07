@@ -11,11 +11,39 @@ const StoryGenerator = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState("");
     const [storyTitle, setStoryTitle] = useState("");
+
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        setIsLoading(true);
+        try{
+            const response = await fetch("http://localhost:5000/api/generate-story", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    prompt,
+                    ageCategory,
+                    genre,
+                    wordLimit,
+                }),
+            })
+            if(!response.ok){
+                throw new Error("Failed to generate story");
+            }
+            const data = await response.json();
+            console.log(data);
+        }catch(err){
+            console.error(err);
+        }finally{
+            setIsLoading(false);
+        }
+    }
   return (
     <div className="story-generator">
         <h1>AI story Generator</h1>
         <p className="subtitle">Enter a prompt, select your preferences, and let AI create a unique story for you.</p>
-        <form>
+        <form onSubmit={handleSubmit}>
             <div className="form-group">
                 <label htmlFor="prompt">Story Prompt</label>
                 <textarea
