@@ -3,9 +3,9 @@ import './App.css'
 import StoryGenerator from './components/StoryGenerator'
 const App = () => {
   return (
-    <main className='container'>
+    <div className='app'>
       <StoryGenerator />
-    </main>
+    </div>
   )
 }
 

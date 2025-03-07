@@ -1,3 +1,8 @@
+.app {
+  min-height: 100vh;
+  background-color: #fff;
+}
+
 .container {
   max-width: 1200px;
   margin: 0 auto;
