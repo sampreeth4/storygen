@@ -1,7 +1,10 @@
 import express, { text } from 'express';
 import Story from '../models/Story.js';
+import dotenv from 'dotenv';
 
+dotenv.config();
 const router = express.Router();
+console.log("Using OpenAI Key:", process.env.OPENAI_API_KEY);
 
 router.post("/generate-story", async (req,res) => {
     try{
