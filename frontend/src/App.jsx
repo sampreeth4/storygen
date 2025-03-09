@@ -1,12 +1,18 @@
-import React from 'react'
-import './App.css'
-import StoryGenerator from './components/StoryGenerator'
+
+
+
+import React from "react";
+import Cursor from "./components/Cursor";  // Import the Cursor component
+import StoryGenerator from "./components/StoryGenerator"; 
+
 const App = () => {
   return (
-    <div className='app'>
+    <div>
+      <Cursor /> {/* Add the cursor effect globally */}
       <StoryGenerator />
     </div>
-  )
-}
+  );
+};
 
-export default App
+export default App;
+
