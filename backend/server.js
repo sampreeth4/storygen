@@ -5,7 +5,7 @@ import dotenv from 'dotenv';
 // import Story from './models/Story.js';
 import storyRoutes from './routes/storyRoutes.js';
 dotenv.config();
-console.log("Using OpenAI Key:", process.env.OPENAI_API_KEY);
+console.log("Using OpenAI Key:", process.env.NEBIUS_API_KEY);
 const app = express();
 const PORT = process.env.PORT || 5000;
 
