@@ -61,7 +61,7 @@ router.post("/generate-story", async (req, res) => {
         });
 
         await story.save();
-
+        console.log("Story generated successfully.", story);
         return res.json({ title: "Generated Story", story: storyText });
 
     } catch (err) {
