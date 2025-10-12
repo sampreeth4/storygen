@@ -135,7 +135,7 @@ export default function StoryGenerator() {
 
             <div className="form-row">
               <div className="form-group">
-                <label htmlFor="age-category">Age Category</label>
+                <label htmlFor="age-category">Age Category.</label>
                 <select id="age-category" value={ageCategory} onChange={(e) => setAgeCategory(e.target.value)}>
                   <option value="all">All Ages</option>
                   <option value="children">Children (3-8)</option>
