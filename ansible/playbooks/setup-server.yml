@@ -1,0 +1,256 @@
+- name: Setup Story Generator Server with Docker, K8s, and Jenkins 
+  hosts: app_servers
+  become: yes
+  vars:
+    app_dir: /opt/story-generator
+  tasks:
+    # ----------------------------------------------------------------------
+    # 1. INITIAL SETUP & CORE DEPENDENCIES (Optimized for speed)
+    # ----------------------------------------------------------------------
+    - name: Update apt cache (Initial refresh with validity)
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Wait for the APT lock to be released
+      ansible.builtin.wait_for:
+          path: /var/lib/dpkg/lock-frontend
+          state: absent
+          timeout: 180  # Wait up to 3 minutes (180 seconds)
+          delay: 5      # Check every 5 seconds
+          msg: "APT lock still held after 3 minutes. Check remote server for rogue processes."
+
+    - name: Install required packages (Utilities)
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3-pip
+        state: present
+
+    - name: Check if Java is already installed
+      ansible.builtin.command: java -version
+      register: java_check
+      ignore_errors: yes
+
+    - name: Install Java 17 only if missing (Largest package install is now early)
+      ansible.builtin.apt:
+        name: openjdk-17-jdk
+        state: present
+      when: java_check.rc != 0
+
+    # ----------------------------------------------------------------------
+    # 2. REPOSITORY SETUP (Adding repos without updating the cache yet)
+    # ----------------------------------------------------------------------
+    - name: Add Docker GPG key
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository (No cache update)
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+        update_cache: no
+
+    - name: Add Jenkins GPG key
+      ansible.builtin.apt_key:
+        url: https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key
+        state: present
+
+    - name: Add Jenkins repository (No cache update)
+      ansible.builtin.apt_repository:
+        repo: 'deb https://pkg.jenkins.io/debian-stable binary/'
+        state: present
+        filename: jenkins
+        update_cache: no
+
+    - name: Final APT cache update after adding all new repositories
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+      tags: ['cache-update'] # Use a tag if you ever need to skip this specific update
+
+    # ----------------------------------------------------------------------
+    # 3. DOCKER INSTALLATION (Uses the fresh cache)
+    # ----------------------------------------------------------------------
+    - name: Install Docker
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+        # Removed redundant update_cache: yes
+
+    - name: Install Docker Compose (standalone)
+      ansible.builtin.get_url:
+        url: https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-linux-x86_64
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+
+    - name: Add ubuntu user to docker group
+      ansible.builtin.user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Start and enable Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: yes
+    
+
+
+    - name: Create application directory
+      ansible.builtin.file:
+        path: /opt/story-generator
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+# In playbooks/setup-server.yml, after the 'Create application directory' task
+# In playbooks/setup-server.yml
+
+    - name: Copy entire project files (excluding large artifacts) to app directory
+      ansible.posix.synchronize:
+        # src is relative to the control node (where you run ansible-playbook)
+        src: "{{ playbook_dir }}/../../"
+        # dest is on the remote host, and the user (ubuntu) has permission to write here
+        dest: "{{ app_dir }}/"
+        archive: yes
+        recursive: yes
+        # Set owner/group to the current remote user (ubuntu), avoiding sudo confusion
+        owner: yes
+        group: yes
+        # We must explicitly use 'mode: push' or 'mode: pull' to tell rsync the direction
+        mode: push 
+        
+        # Use rsync_opts for granular exclusions
+        rsync_opts:
+          - "--exclude=node_modules"
+          - "--exclude=.git"
+          - "--exclude=terraform"
+          - "--exclude=ansible"
+          - "--exclude=__pycache__"
+          - "--exclude=*.pyc"
+      # REMOVED: delegate_to: localhost 
+      # This task automatically runs on the remote host (app_server)
+      # as it's targeted there by the 'hosts: app_servers' line.
+    # ----------------------------------------------------------------------
+    # 4. JENKINS INSTALLATION (Uses the fresh cache)
+    # ----------------------------------------------------------------------
+    - name: Install Jenkins
+      ansible.builtin.apt:
+        name: jenkins
+        state: present
+        # Removed redundant update_cache: yes
+
+    - name: Add jenkins user to docker group
+      ansible.builtin.user:
+        name: jenkins
+        groups: docker
+        append: yes
+
+    - name: Start and enable Jenkins
+      ansible.builtin.systemd:
+        name: jenkins
+        state: started
+        enabled: yes
+
+    # Wait tasks (These are necessary and cannot be sped up, but Jenkins takes time to initialize)
+    - name: Wait for Jenkins to start
+      ansible.builtin.wait_for:
+        port: 8080
+        timeout: 300
+        delay: 10
+
+    - name: Wait for Jenkins initial password file
+      ansible.builtin.wait_for:
+        path: /var/lib/jenkins/secrets/initialAdminPassword
+        timeout: 300
+
+    - name: Get Jenkins initial admin password
+      ansible.builtin.slurp:
+        src: /var/lib/jenkins/secrets/initialAdminPassword
+      register: jenkins_admin_pwd
+
+    - name: Save Jenkins password for ubuntu user
+      ansible.builtin.copy:
+        content: "{{ jenkins_admin_pwd.content | b64decode }}"
+        dest: /home/ubuntu/jenkins-password.txt
+        owner: ubuntu
+        group: ubuntu
+        mode: '0600'
+
+    # ----------------------------------------------------------------------
+    # 5. KUBERNETES (K3s) SETUP
+    # ----------------------------------------------------------------------
+    - name: Check if K3s is already installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/k3s
+      register: k3s_installed
+
+    - name: Download K3s installation script
+      ansible.builtin.get_url:
+        url: https://get.k3s.io
+        dest: /tmp/k3s-install.sh
+        mode: '0755'
+      when: not k3s_installed.stat.exists
+
+    - name: Install K3s (lightweight Kubernetes)
+      ansible.builtin.shell: |
+        INSTALL_K3S_EXEC="--disable=traefik --write-kubeconfig-mode=644" sh /tmp/k3s-install.sh
+      args:
+        creates: /usr/local/bin/k3s
+      when: not k3s_installed.stat.exists
+
+    - name: Wait for K3s to be ready
+      ansible.builtin.wait_for:
+        path: /etc/rancher/k3s/k3s.yaml
+        timeout: 300
+      when: not k3s_installed.stat.exists
+
+    - name: Create .kube directory for ubuntu user
+      ansible.builtin.file:
+        path: /home/ubuntu/.kube
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Copy kubeconfig for ubuntu user
+      ansible.builtin.copy:
+        src: /etc/rancher/k3s/k3s.yaml
+        dest: /home/ubuntu/.kube/config
+        owner: ubuntu
+        group: ubuntu
+        mode: '0600'
+        remote_src: yes
+
+    - name: Set KUBECONFIG environment variable
+      ansible.builtin.lineinfile:
+        path: /home/ubuntu/.bashrc
+        line: 'export KUBECONFIG=/home/ubuntu/.kube/config'
+        create: yes
+
+    - name: Add kubectl alias
+      ansible.builtin.lineinfile:
+        path: /home/ubuntu/.bashrc
+        line: 'alias k=kubectl'
+
+    - name: Display setup summary
+      ansible.builtin.debug:
+        msg:
+          - "✓ Docker installed and running"
+          - "✓ Kubernetes (K3s) installed and running"
+          - "✓ Jenkins installed and running on port 8080"
+          - "✓ Jenkins password saved to /home/ubuntu/jenkins-password.txt"

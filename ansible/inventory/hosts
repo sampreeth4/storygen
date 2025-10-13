@@ -1,0 +1,6 @@
+[app_servers]
+story-server ansible_host=13.203.138.155
+
+[app_servers:vars]
+ansible_python_interpreter=/usr/bin/python3
+app_dir=/opt/story-generator

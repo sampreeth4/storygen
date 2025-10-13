@@ -7,8 +7,10 @@ pipeline {
   }
 
   environment {
-    DOCKER_HUB_USER   = 'sampreeth455'
-    DOCKER_IMAGE      = 'storygen-backend'
+    // DOCKER_HUB_USER   = 'sampreeth455'
+    // DOCKER_IMAGE      = 'storygen-backend'
+    DOCKER_HUB_USER   = 'dwija18'
+    DOCKER_IMAGE      = 'story-backend'
     DOCKER_IMAGE_REPO = "${DOCKER_HUB_USER}/${DOCKER_IMAGE}"
     OPENAI_API_KEY    = credentials('openai-key')   // Jenkins "Secret text" with your API key
   }
@@ -20,6 +22,7 @@ pipeline {
         // ensure a clean workspace and do an explicit clone
         deleteDir()
         git branch: 'main', url: 'https://github.com/sampreeth4/storygen.git'
+        
       }
     }
 

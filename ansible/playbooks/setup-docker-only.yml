@@ -1,0 +1,159 @@
+- name: Setup Story Generator Server (Docker Only - Optimized for t3.small)
+  hosts: app_servers
+  become: yes
+  vars:
+    app_dir: /opt/story-generator
+  
+  tasks:
+    # ----------------------------------------------------------------------
+    # 1. INITIAL SETUP & CORE DEPENDENCIES
+    # ----------------------------------------------------------------------
+    - name: Update apt cache (Initial refresh with validity)
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages (Utilities)
+      ansible.builtin.apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - python3-pip
+        state: present
+
+    # ----------------------------------------------------------------------
+    # 2. DOCKER REPOSITORY SETUP
+    # ----------------------------------------------------------------------
+    - name: Add Docker GPG key
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+
+    - name: Add Docker repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+        update_cache: yes
+
+    # ----------------------------------------------------------------------
+    # 3. DOCKER INSTALLATION
+    # ----------------------------------------------------------------------
+    - name: Install Docker
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+
+    - name: Install Docker Compose (standalone)
+      ansible.builtin.get_url:
+        url: https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-linux-x86_64
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+
+    - name: Add ubuntu user to docker group
+      ansible.builtin.user:
+        name: ubuntu
+        groups: docker
+        append: yes
+
+    - name: Configure Docker daemon for better performance on t3.small
+      ansible.builtin.copy:
+        content: |
+          {
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "10m",
+              "max-file": "3"
+            },
+            "storage-driver": "overlay2",
+            "default-ulimits": {
+              "nofile": {
+                "Name": "nofile",
+                "Hard": 64000,
+                "Soft": 64000
+              }
+            }
+          }
+        dest: /etc/docker/daemon.json
+        owner: root
+        group: root
+        mode: '0644'
+      notify: restart docker
+
+    - name: Start and enable Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    # ----------------------------------------------------------------------
+    # 4. APPLICATION DIRECTORY SETUP
+    # ----------------------------------------------------------------------
+    - name: Create application directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+
+    - name: Copy entire project files (excluding large artifacts) to app directory
+      ansible.posix.synchronize:
+        src: "{{ playbook_dir }}/../../"
+        dest: "{{ app_dir }}/"
+        archive: yes
+        recursive: yes
+        owner: yes
+        group: yes
+        mode: push
+        rsync_opts:
+          - "--exclude=node_modules"
+          - "--exclude=.git"
+          - "--exclude=terraform"
+          - "--exclude=ansible"
+          - "--exclude=__pycache__"
+          - "--exclude=*.pyc"
+          - "--exclude=*.log"
+
+    # ----------------------------------------------------------------------
+    # 5. SYSTEM OPTIMIZATION FOR t3.small
+    # ----------------------------------------------------------------------
+    - name: Enable swap if not already enabled (helps with 2GB RAM)
+      ansible.builtin.shell: |
+        if [ ! -f /swapfile ]; then
+          fallocate -l 2G /swapfile
+          chmod 600 /swapfile
+          mkswap /swapfile
+          swapon /swapfile
+          echo '/swapfile none swap sw 0 0' >> /etc/fstab
+        fi
+      args:
+        creates: /swapfile
+
+    - name: Set swappiness to 10 (use swap only when necessary)
+      ansible.builtin.sysctl:
+        name: vm.swappiness
+        value: '10'
+        state: present
+        reload: yes
+
+    - name: Display setup summary
+      ansible.builtin.debug:
+        msg:
+          - "✓ Docker installed and running"
+          - "✓ Application directory created at {{ app_dir }}"
+          - "✓ Swap enabled (2GB) for memory stability"
+          - "✓ Docker daemon optimized for t3.small"
+          - "✓ Ready for docker-compose deployment"
+
+  handlers:
+    - name: restart docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted

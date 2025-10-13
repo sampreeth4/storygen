@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: story-generator
+  labels:
+    name: story-generator
+    environment: production

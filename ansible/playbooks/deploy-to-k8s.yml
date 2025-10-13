@@ -1,0 +1,106 @@
+- name: Deploy Story Generator to Kubernetes
+  hosts: app_servers
+  become: yes
+  become_user: ubuntu
+
+  vars:
+    app_dir: /opt/story-generator
+    nebius_api_key: "{{ lookup('env', 'NEBIUS_API_KEY') }}"
+    openai_api_key: "{{ lookup('env', 'OPENAI_API_KEY') | default('not-set', true) }}"
+
+  tasks:
+    # - name: Wait for K3s to be fully ready
+    #   shell: kubectl get nodes
+    #   retries: 10
+    #   delay: 5
+    #   register: result
+    #   until: result.rc == 0
+    # - name: Wait for K3s to be fully ready (Increased Timeout)
+    #   ansible.builtin.shell: kubectl get nodes
+    #   retries: 24  # Increase retries for a total wait time of 2 minutes (24 * 5s = 120s)
+    #   delay: 5
+    #   register: result
+    #   until: result.rc == 0
+    #   environment:
+    #     # Ensure KUBECONFIG is set, even for this basic check
+    #     KUBECONFIG: /home/ubuntu/.kube/config
+
+    - name: Wait for core Kubernetes system pods to be ready (Robust Check)
+      ansible.builtin.shell: >
+        kubectl wait --for=condition=Ready pod 
+        --all 
+        -n kube-system 
+        --timeout=300s # Up to 5 minutes max wait
+      register: k8s_system_ready
+      until: k8s_system_ready.rc == 0
+      retries: 5
+      delay: 10 # Check every 10 seconds
+      environment:
+        KUBECONFIG: /home/ubuntu/.kube/config
+
+    - name: Create story-generator namespace
+      shell: kubectl apply -f {{ app_dir }}/k8s/namespace.yaml --validate=false
+      environment:
+        KUBECONFIG: /home/ubuntu/.kube/config
+
+    - name: Create API keys secret
+      shell: |
+        kubectl create secret generic api-keys \
+          --from-literal=NEBIUS_API_KEY="{{ nebius_api_key }}" \
+          --from-literal=OPENAI_API_KEY="{{ openai_api_key }}" \
+          -n story-generator \
+          --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /home/ubuntu/.kube/config
+
+    - name: Apply MongoDB secret
+      shell: kubectl apply -f {{ app_dir }}/k8s/mongodb-secret.yaml --validate=false
+      environment:
+        KUBECONFIG: /home/ubuntu/.kube/config
+
+    - name: Deploy MongoDB
+      shell: kubectl apply -f {{ app_dir }}/k8s/mongodb-deployment.yaml --validate=false
+      environment:
+        KUBECONFIG: /home/ubuntu/.kube/config
+
+    - name: Wait for MongoDB to be ready
+      shell: kubectl wait --for=condition=ready pod -l app=mongodb -n story-generator --timeout=300s
+      environment:
+        KUBECONFIG: /home/ubuntu/.kube/config
+      ignore_errors: yes
+
+    - name: Deploy Backend
+      shell: kubectl apply -f {{ app_dir }}/k8s/backend-deployment.yaml --validate=false
+      environment:
+        KUBECONFIG: /home/ubuntu/.kube/config
+
+    - name: Deploy Frontend
+      shell: kubectl apply -f {{ app_dir }}/k8s/frontend-deployment.yaml --validate=false
+      environment:
+        KUBECONFIG: /home/ubuntu/.kube/config
+
+    - name: Wait for all pods to be ready
+      shell: kubectl wait --for=condition=ready pod --all -n story-generator --timeout=300s
+      environment:
+        KUBECONFIG: /home/ubuntu/.kube/config
+      ignore_errors: yes
+
+    - name: Get all Kubernetes resources
+      shell: kubectl get all -n story-generator
+      environment:
+        KUBECONFIG: /home/ubuntu/.kube/config
+      register: k8s_resources
+
+    - name: Display Kubernetes resources
+      debug:
+        msg: "{{ k8s_resources.stdout_lines }}"
+
+    - name: Get pod details
+      shell: kubectl get pods -n story-generator -o wide
+      environment:
+        KUBECONFIG: /home/ubuntu/.kube/config
+      register: pod_details
+
+    - name: Display pod details
+      debug:
+        msg: "{{ pod_details.stdout_lines }}"

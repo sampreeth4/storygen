@@ -8,9 +8,16 @@ const router = express.Router();
 
 // Initialize Nebius client
 const client = new OpenAI({
-    baseURL: 'https://api.studio.nebius.com/v1/',
-    apiKey: process.env.NEBIUS_API_KEY,
+  apiKey: process.env.NEBIUS_API_KEY,
+  baseURL: 'https://api.studio.nebius.ai/v1', // ✅ Correct endpoint
 });
+
+// const client = new OpenAI({
+//   apiKey: process.env.NEBIUS_API_KEY,
+//   baseURL: 'https://api.studio.nebius.com/v1/', // ✅ Fixed: Changed from .ai to .com and added trailing slash
+// });
+
+
 
 router.post("/generate-story", async (req, res) => {
     try {
@@ -33,11 +40,11 @@ router.post("/generate-story", async (req, res) => {
 
         // Send request to Nebius API
         const response = await client.chat.completions.create({
-            model: "meta-llama/Meta-Llama-3.1-70B-Instruct-fast",
+            model: "meta-llama/Llama-3.3-70B-Instruct-fast",
             max_tokens: 512,
             temperature: 0.6,
             top_p: 0.9,
-            extra_body: { top_k: 50 },
+            // extra_body: { top_k: 50 },
             messages: [
                 { role: "system", content: systemPrompt },
                 { role: "user", content: userPrompt }

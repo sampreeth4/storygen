@@ -1,0 +1,209 @@
+- name: Deploy Story Generator Application
+  hosts: app_servers
+  become: yes
+  
+  vars:
+    app_dir: /opt/story-generator
+    nebius_api_key: "{{ lookup('env', 'NEBIUS_API_KEY') }}"
+    openai_api_key: "{{ lookup('env', 'OPENAI_API_KEY') }}"
+    mongo_uri: "mongodb://mongodb:27017/story-generator"
+
+  tasks:
+    - name: Check available memory
+      shell: free -m | awk 'NR==2{printf "%.0f", $7}'
+      register: available_memory
+      
+    - name: Display available memory
+      debug:
+        msg: "Available memory: {{ available_memory.stdout }} MB"
+    
+    - name: Stop existing containers
+      shell: docker-compose down || true
+      args:
+        chdir: "{{ app_dir }}"
+      ignore_errors: yes
+
+    - name: Prune Docker system to free space
+      shell: docker system prune -af --volumes || true
+      ignore_errors: yes
+
+    - name: Copy application files
+      synchronize:
+        src: "{{ playbook_dir }}/../../"
+        dest: "{{ app_dir }}"
+        delete: yes
+        rsync_opts:
+          - "--exclude=node_modules"
+          - "--exclude=.git"
+          - "--exclude=terraform"
+          - "--exclude=ansible"
+          - "--exclude=*.log"
+          - "--exclude=.env"
+
+    - name: Create .env file for backend
+      copy:
+        content: |
+          NEBIUS_API_KEY={{ nebius_api_key }}
+          MONGO_URI={{ mongo_uri }}
+          OPENAI_API_KEY={{ openai_api_key }}
+          PORT=5000
+          NODE_ENV=production
+        dest: "{{ app_dir }}/backend/.env"
+        owner: ubuntu
+        group: ubuntu
+        mode: '0600'
+
+    - name: Pull base Docker images first
+      shell: |
+        docker pull mongo:7.0
+        docker pull public.ecr.aws/docker/library/node:18
+        docker pull public.ecr.aws/docker/library/nginx:alpine
+      args:
+        chdir: "{{ app_dir }}"
+      async: 600
+      poll: 10
+
+    - name: Build containers with reduced concurrency
+      shell: docker-compose build 
+      args:
+        chdir: "{{ app_dir }}"
+      environment:
+        DOCKER_BUILDKIT: 1
+        COMPOSE_DOCKER_CLI_BUILD: 1
+      async: 1200
+      poll: 15
+
+    - name: Start containers
+      shell: docker-compose up -d
+      args:
+        chdir: "{{ app_dir }}"
+
+    - name: Wait for MongoDB to be ready
+      wait_for:
+        port: 27017
+        delay: 5
+        timeout: 120
+
+    - name: Wait for backend to be ready
+      wait_for:
+        port: 5000
+        delay: 10
+        timeout: 180
+
+    - name: Wait for frontend to be ready
+      wait_for:
+        port: 80
+        delay: 5
+        timeout: 120
+
+    - name: Check container status
+      shell: docker-compose ps
+      args:
+        chdir: "{{ app_dir }}"
+      register: container_status
+
+    - name: Display container status
+      debug:
+        var: container_status.stdout_lines
+
+    - name: Check container logs for errors
+      shell: |
+        echo "=== Backend Logs ==="
+        docker-compose logs --tail=50 backend
+        echo "=== Frontend Logs ==="
+        docker-compose logs --tail=50 frontend
+      args:
+        chdir: "{{ app_dir }}"
+      register: container_logs
+      
+    - name: Display recent logs
+      debug:
+        var: container_logs.stdout_lines
+
+
+# - name: Deploy Story Generator Application
+#   hosts: app_servers
+#   become: yes
+  
+#   vars:
+#     app_dir: /opt/story-generator
+#     nebius_api_key: "{{ lookup('env', 'NEBIUS_API_KEY') }}"
+#     openai_api_key: "{{ lookup('env', 'OPENAI_API_KEY') }}"
+#     mongo_uri: "mongodb://localhost:27017/story-generator"
+
+#   tasks:
+#     - name: Stop existing containers
+#       shell: docker-compose down || true
+#       args:
+#         chdir: "{{ app_dir }}"
+#       ignore_errors: yes
+
+#     # - name: Copy application files
+#     #   synchronize:
+#     #     src: ../../
+#     #     dest: "{{ app_dir }}"
+#     #     delete: yes
+#     #     rsync_opts:
+#     #       - "--exclude=node_modules"
+#     #       - "--exclude=.git"
+#     #       - "--exclude=terraform"
+#     #       - "--exclude=ansible"
+#     - name: Copy application files
+#       synchronize:
+#         src: "{{ playbook_dir }}/../../"
+#         dest: "{{ app_dir }}"
+#         delete: yes
+#         rsync_opts:
+#           - "--exclude=node_modules"
+#           - "--exclude=.git"
+#           - "--exclude=terraform"
+#           - "--exclude=ansible"
+
+#     - name: Create .env file for backend
+#       copy:
+#         content: |
+#           NEBIUS_API_KEY={{ nebius_api_key }}
+#           MONGO_URI={{ mongo_uri }}
+#           OPENAI_API_KEY={{ openai_api_key }}
+#           PORT=5000
+#         dest: "{{ app_dir }}/backend/.env"
+#         owner: ubuntu
+#         group: ubuntu
+#         mode: '0600'
+
+#     - name: Pull Docker images
+#       shell: docker-compose pull
+#       args:
+#         chdir: "{{ app_dir }}"
+
+#     - name: Build and start containers
+#       shell: docker-compose up -d --build
+#       args:
+#         chdir: "{{ app_dir }}"
+
+#     # - name: Wait for services to be ready
+#     #   wait_for:
+#     #     port: "{{ item }}"
+#     #     delay: 10
+#     #     timeout: 300
+#     #   loop:
+#     #     - 5000
+#     #     - 80
+#     - name: Wait for services to be ready
+#       wait_for:
+#         port: "{{ item }}"
+#         delay: 10
+#         timeout: 300
+#       loop:
+#         - 5000   # backend
+#         - 80  # frontend
+
+#     - name: Check container status
+#       shell: docker-compose ps
+#       args:
+#         chdir: "{{ app_dir }}"
+#       register: container_status
+
+#     - name: Display container status
+#       debug:
+#         var: container_status.stdout_lines
